@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
-from typing import Optional, Sequence
+from typing import IO, Optional, Sequence
 
 from portwatch import __version__
 from portwatch.local_scan import LocalScanError, scan_local_ports
@@ -134,13 +135,31 @@ def _truncate(text: str, width: int) -> str:
     return text if len(text) <= width else text[: width - 3] + "..."
 
 
+def _write(text: str, stream: Optional[IO[str]] = None) -> None:
+    """Print text, replacing characters the output stream cannot encode.
+
+    Legacy console codepages (e.g. Windows cp437/cp1252) cannot represent
+    every character that may appear in banners or process names; without
+    this guard the scan result would be lost to a UnicodeEncodeError.
+    """
+    stream = stream if stream is not None else sys.stdout
+    encoding = getattr(stream, "encoding", None) or "utf-8"
+    try:
+        text.encode(encoding, errors="strict")
+    except (UnicodeEncodeError, LookupError):
+        text = text.encode(encoding, errors="replace").decode(encoding, errors="replace")
+    print(text, file=stream)
+
+
 def _print_json(payload: object) -> None:
-    print(json.dumps(payload, indent=2))
+    _write(json.dumps(payload, indent=2))
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if not math.isfinite(args.timeout) or args.timeout <= 0:
+        parser.error("timeout must be a positive finite number")
 
     try:
         if args.mode == "local":
@@ -148,7 +167,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             if args.output_format == "json":
                 _print_json([record.as_dict() for record in records])
             else:
-                print(_render_local_table(records))
+                _write(_render_local_table(records))
             return 0
 
         if not args.targets:
@@ -166,7 +185,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         if args.output_format == "json":
             _print_json([result.as_dict() for result in results])
         else:
-            print(_render_remote_table(results))
+            _write(_render_remote_table(results))
         return 0
     except (TargetError, LocalScanError) as exc:
         print(f"error: {exc}", file=sys.stderr)

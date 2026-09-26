@@ -1,5 +1,6 @@
 """Tests for the command-line interface."""
 
+import io
 import json
 import socket
 import threading
@@ -37,6 +38,18 @@ class TestParser:
     def test_bad_mode_rejected(self):
         with pytest.raises(SystemExit):
             build_parser().parse_args(["--mode", "wizard"])
+
+    def test_timeout_must_be_finite(self, capsys):
+        with pytest.raises(SystemExit) as excinfo:
+            main(["--mode", "remote", "127.0.0.1", "-p", "80", "-t", "nan"])
+        assert excinfo.value.code == 2
+        assert "finite" in capsys.readouterr().err
+
+    def test_timeout_must_be_positive(self, capsys):
+        with pytest.raises(SystemExit) as excinfo:
+            main(["--mode", "remote", "127.0.0.1", "-p", "80", "-t", "-1"])
+        assert excinfo.value.code == 2
+        assert "positive" in capsys.readouterr().err
 
     def test_remote_requires_targets(self, capsys):
         with pytest.raises(SystemExit) as excinfo:
@@ -101,3 +114,25 @@ class TestRemoteMode:
     def test_invalid_cidr_exit_code(self, capsys):
         assert main(["--mode", "remote", "300.300.300.300/24"]) == 2
         assert "error" in capsys.readouterr().err.lower()
+
+
+class TestOutputEncoding:
+    class _Cp437Stream(io.StringIO):
+        """String stream that pretends to use a legacy Windows codepage."""
+
+        encoding = "cp437"
+
+    def test_unencodable_banner_is_replaced_not_fatal(self):
+        from portwatch.cli import _write
+
+        stream = self._Cp437Stream()
+        _write("banner \ufffd\ufffd end", stream=stream)
+        assert "\ufffd" not in stream.getvalue()
+        assert "??" in stream.getvalue()
+
+    def test_encodable_text_passes_through(self):
+        from portwatch.cli import _write
+
+        stream = self._Cp437Stream()
+        _write("plain ascii banner", stream=stream)
+        assert stream.getvalue() == "plain ascii banner\n"

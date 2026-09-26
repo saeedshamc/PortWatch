@@ -1,0 +1,103 @@
+"""Tests for the command-line interface."""
+
+import json
+import socket
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+import pytest
+
+from portwatch.cli import build_parser, main
+
+
+class TestParser:
+    def test_defaults(self):
+        args = build_parser().parse_args([])
+        assert args.mode == "local"
+        assert args.output_format == "table"
+        assert args.protocol == "inet"
+        assert args.concurrency == 100
+        assert args.timeout == 2.0
+        assert args.probe is False
+        assert args.targets == []
+
+    def test_remote_flags_parse(self):
+        args = build_parser().parse_args(
+            ["--mode", "remote", "10.0.0.1", "10.0.0.0/30",
+             "-p", "80,443", "-c", "50", "-t", "1.5", "--probe", "-f", "json"]
+        )
+        assert args.mode == "remote"
+        assert args.targets == ["10.0.0.1", "10.0.0.0/30"]
+        assert args.ports == "80,443"
+        assert args.concurrency == 50
+        assert args.timeout == 1.5
+        assert args.probe is True
+        assert args.output_format == "json"
+
+    def test_bad_mode_rejected(self):
+        with pytest.raises(SystemExit):
+            build_parser().parse_args(["--mode", "wizard"])
+
+    def test_remote_requires_targets(self, capsys):
+        with pytest.raises(SystemExit) as excinfo:
+            main(["--mode", "remote"])
+        assert excinfo.value.code == 2
+        assert "target" in capsys.readouterr().err
+
+
+class TestLocalMode:
+    def test_table_output_mentions_protocols(self, capsys):
+        assert main(["--protocol", "tcp"]) == 0
+        out = capsys.readouterr().out
+        assert "PROTO" in out and "PID" in out
+
+    def test_json_output_is_valid(self, capsys):
+        assert main(["--protocol", "tcp", "-f", "json"]) == 0
+        records = json.loads(capsys.readouterr().out)
+        assert isinstance(records, list)
+        assert all("local_port" in record for record in records)
+
+
+class TestRemoteMode:
+    @pytest.fixture()
+    def http_port(self):
+        class Handler(BaseHTTPRequestHandler):
+            def do_HEAD(self):
+                self.send_response(200)
+                self.end_headers()
+
+            def log_message(self, *args):
+                pass
+
+        server = HTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        yield server.server_address[1]
+        server.shutdown()
+        server.server_close()
+
+    def test_table_finds_http_service(self, http_port, capsys):
+        code = main(["--mode", "remote", "127.0.0.1", "-p", str(http_port),
+                     "--probe", "-c", "10", "-t", "2"])
+        assert code == 0
+        out = capsys.readouterr().out
+        assert "http" in out
+        assert "1 port(s) scanned, 1 open" in out
+
+    def test_json_finds_open_port(self, http_port, capsys):
+        code = main(["--mode", "remote", "127.0.0.1", "-p", str(http_port),
+                     "-f", "json", "-c", "10", "-t", "2"])
+        assert code == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert payload[0]["host"] == "127.0.0.1"
+        assert payload[0]["ports_scanned"] == 1
+        assert payload[0]["open_ports"][0]["port"] == http_port
+        assert payload[0]["open_ports"][0]["open"] is True
+
+    def test_bad_port_spec_exit_code(self, capsys):
+        assert main(["--mode", "remote", "127.0.0.1", "-p", "99999"]) == 2
+        assert "error" in capsys.readouterr().err.lower()
+
+    def test_invalid_cidr_exit_code(self, capsys):
+        assert main(["--mode", "remote", "300.300.300.300/24"]) == 2
+        assert "error" in capsys.readouterr().err.lower()

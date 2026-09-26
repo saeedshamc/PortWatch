@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import socket
 from typing import Iterable, Optional, Sequence
 
 from portwatch.banner import build_http_probe, grab_banner as _grab_banner, identify_service
@@ -10,19 +11,26 @@ from portwatch.models import PortResult, RemoteScanResult
 from portwatch.targets import Target
 
 
-async def _resolve(target: Target) -> Optional[str]:
-    """Resolve a target hostname to its primary IPv4/IPv6 address, if needed."""
+async def _resolve_addresses(target: Target) -> list[str]:
+    """Resolve a target to the list of IP addresses its hostname maps to.
+
+    IP targets return a single-element list unchanged; unresolvable hostnames
+    return an empty list.
+    """
     if target.is_ip:
-        return target.host
+        return [target.host]
     try:
         infos = await asyncio.get_running_loop().getaddrinfo(
-            target.host, None, family=0, type=asyncio.socket.SOCK_STREAM
+            target.host, None, family=0, type=socket.SOCK_STREAM
         )
     except OSError:
-        return None
-    for family, _type, _proto, _canonname, sockaddr in infos:
-        return str(sockaddr[0])
-    return None
+        return []
+    addresses: list[str] = []
+    for _family, _type, _proto, _canonname, sockaddr in infos:
+        address = str(sockaddr[0])
+        if address not in addresses:
+            addresses.append(address)
+    return addresses
 
 
 async def _probe_port(
@@ -83,10 +91,13 @@ async def scan_remote(
 ) -> list[RemoteScanResult]:
     """Scan each target's ports concurrently and group results per host.
 
-    ``concurrency`` bounds the number of in-flight connection attempts and
-    ``timeout`` limits each individual TCP connect (and banner read). With
-    ``probe=True`` an HTTP HEAD request is sent before reading the banner so
-    silent services (e.g. web servers) can still be identified.
+    Each target is resolved once; every port is then probed against the
+    resolved address, so DNS is queried a single time per host regardless of
+    port count. ``concurrency`` bounds the number of in-flight connection
+    attempts and ``timeout`` limits each individual TCP connect (and banner
+    read). With ``probe=True`` an HTTP HEAD request is sent before reading
+    the banner so silent services (e.g. web servers) can be identified.
+    Unresolvable hostnames are reported with no open ports.
     """
     if concurrency < 1:
         raise ValueError("concurrency must be >= 1")
@@ -95,11 +106,16 @@ async def scan_remote(
     semaphore = asyncio.Semaphore(concurrency)
 
     async def scan_target(target: Target) -> RemoteScanResult:
-        resolved = await _resolve(target)
         host_key = target.raw if not target.is_ip else target.host
+        addresses = await _resolve_addresses(target)
+        resolved = addresses[0] if addresses else None
+        if resolved is None:
+            return RemoteScanResult(
+                host=host_key, resolved_ip=None, ports_scanned=len(ports), open_ports=[]
+            )
         results = await asyncio.gather(
             *(
-                _probe_port(target.host, port, timeout, semaphore, grab_banner, probe)
+                _probe_port(resolved, port, timeout, semaphore, grab_banner, probe)
                 for port in ports
             )
         )

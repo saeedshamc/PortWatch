@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import Iterable, Optional, Sequence
 
+from portwatch.banner import build_http_probe, grab_banner as _grab_banner, identify_service
 from portwatch.models import PortResult, RemoteScanResult
 from portwatch.targets import Target
 
@@ -30,6 +31,7 @@ async def _probe_port(
     timeout: float,
     semaphore: asyncio.Semaphore,
     grab_banner: bool,
+    probe: bool,
 ) -> PortResult:
     """Attempt one TCP connection; optionally read an identifying banner."""
     async with semaphore:
@@ -49,13 +51,20 @@ async def _probe_port(
 
         banner = None
         service = None
-        if grab_banner:
-            from portwatch.banner import grab_banner as _grab, identify_service
-
-            raw = await _grab(reader, timeout=timeout)
-            if raw:
-                banner = raw
-                service = identify_service(banner)
+        if grab_banner or probe:
+            if probe:
+                try:
+                    writer.write(build_http_probe(host, port))
+                    await asyncio.wait_for(writer.drain(), timeout=timeout)
+                except (OSError, asyncio.TimeoutError):
+                    pass
+            if grab_banner:
+                raw = await _grab_banner(reader, timeout=timeout)
+                if raw:
+                    banner = raw
+                    service = identify_service(banner, port=port)
+            if service is None:
+                service = identify_service(None, port=port)
         writer.close()
         try:
             await writer.wait_closed()
@@ -70,11 +79,14 @@ async def scan_remote(
     concurrency: int = 100,
     timeout: float = 2.0,
     grab_banner: bool = True,
+    probe: bool = False,
 ) -> list[RemoteScanResult]:
     """Scan each target's ports concurrently and group results per host.
 
     ``concurrency`` bounds the number of in-flight connection attempts and
-    ``timeout`` limits each individual TCP connect (and banner read).
+    ``timeout`` limits each individual TCP connect (and banner read). With
+    ``probe=True`` an HTTP HEAD request is sent before reading the banner so
+    silent services (e.g. web servers) can still be identified.
     """
     if concurrency < 1:
         raise ValueError("concurrency must be >= 1")
@@ -87,7 +99,7 @@ async def scan_remote(
         host_key = target.raw if not target.is_ip else target.host
         results = await asyncio.gather(
             *(
-                _probe_port(target.host, port, timeout, semaphore, grab_banner)
+                _probe_port(target.host, port, timeout, semaphore, grab_banner, probe)
                 for port in ports
             )
         )
@@ -109,6 +121,7 @@ def scan_targets_sync(
     concurrency: int = 100,
     timeout: float = 2.0,
     grab_banner: bool = True,
+    probe: bool = False,
 ) -> list[RemoteScanResult]:
     """Synchronous entry point that runs the async scanner on a fresh loop."""
     return asyncio.run(
@@ -118,5 +131,6 @@ def scan_targets_sync(
             concurrency=concurrency,
             timeout=timeout,
             grab_banner=grab_banner,
+            probe=probe,
         )
     )

@@ -117,6 +117,64 @@ class TestRemoteMode:
         assert "error" in capsys.readouterr().err.lower()
 
 
+class TestDiffMode:
+    @staticmethod
+    def _write_remote(path, host, ports):
+        payload = [
+            {"host": host, "resolved_ip": "127.0.0.1", "ports_scanned": 10,
+             "open_ports": [
+                 {"host": host, "port": port, "open": True, "error": None,
+                  "banner": banner, "service": service}
+                 for port, service, banner in ports
+             ]}
+        ]
+        path.write_text(json.dumps(payload), encoding="utf-8")
+
+    def test_reports_opened_and_closed(self, tmp_path, capsys):
+        old, new = tmp_path / "old.json", tmp_path / "new.json"
+        self._write_remote(old, "10.0.0.5", [(22, "ssh", "SSH-2.0"), (80, "http", None)])
+        self._write_remote(new, "10.0.0.5", [(22, "ssh", "SSH-2.0"), (8080, "http", None)])
+        code = main(["--mode", "diff", str(old), str(new)])
+        assert code == 2  # differences exist
+        out = capsys.readouterr().out
+        assert "NEWLY OPENED:" in out and "8080" in out
+        assert "NEWLY CLOSED:" in out and "80" in out
+
+    def test_identical_scans_exit_zero(self, tmp_path, capsys):
+        old = tmp_path / "old.json"
+        self._write_remote(old, "10.0.0.5", [(22, "ssh", None)])
+        assert main(["--mode", "diff", str(old), str(old)]) == 0
+
+    def test_json_output_shape(self, tmp_path, capsys):
+        old, new = tmp_path / "old.json", tmp_path / "new.json"
+        self._write_remote(old, "10.0.0.5", [])
+        self._write_remote(new, "10.0.0.5", [(443, "https", None)])
+        assert main(["--mode", "diff", str(old), str(new), "-f", "json"]) == 2
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["opened"][0]["port"] == 443
+        assert payload["opened"][0]["service"] == "https"
+
+    def test_requires_exactly_two_files(self, tmp_path, capsys):
+        old = tmp_path / "old.json"
+        self._write_remote(old, "10.0.0.5", [])
+        with pytest.raises(SystemExit) as excinfo:
+            main(["--mode", "diff", str(old)])
+        assert excinfo.value.code == 2
+
+    def test_unreadable_file_exits_two(self, tmp_path, capsys):
+        good = tmp_path / "good.json"
+        self._write_remote(good, "10.0.0.5", [])
+        assert main(["--mode", "diff", str(good), str(tmp_path / "missing.json")]) == 2
+        assert "error" in capsys.readouterr().err.lower()
+
+    def test_mismatched_hosts_exits_two(self, tmp_path, capsys):
+        a, b = tmp_path / "a.json", tmp_path / "b.json"
+        self._write_remote(a, "10.0.0.5", [])
+        self._write_remote(b, "10.0.0.9", [])
+        assert main(["--mode", "diff", str(a), str(b)]) == 2
+        assert "different hosts" in capsys.readouterr().err
+
+
 class TestOutputFile:
     def test_json_file_is_utf8_lf(self, tmp_path, capsys, http_port):
         target = tmp_path / "out.json"

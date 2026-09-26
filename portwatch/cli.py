@@ -9,6 +9,7 @@ import sys
 from typing import IO, Optional, Sequence
 
 from portwatch import __version__
+from portwatch.diffing import compare_files, exit_code_for, render_diff_table
 from portwatch.local_scan import LocalScanError, scan_local_ports
 from portwatch.models import PortRecord, RemoteScanResult
 from portwatch.remote_scan import scan_targets_sync
@@ -23,17 +24,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--mode",
-        choices=("local", "remote"),
+        choices=("local", "remote", "diff"),
         default="local",
-        help="scan mode: local listening sockets or remote TCP connect scan "
-        "(default: local)",
+        help="scan mode: local listening sockets, remote TCP connect scan, or "
+        "diff of two saved scan files (default: local)",
     )
     parser.add_argument(
         "targets",
         nargs="*",
         metavar="TARGET",
-        help="remote mode only: IPs, hostnames or CIDR subnets "
-        f"(e.g. 10.0.0.1 myhost.local 192.168.1.0/24; subnets capped at {MAX_CIDR_HOSTS} hosts)",
+        help="remote mode: IPs, hostnames or CIDR subnets "
+        f"(e.g. 10.0.0.1 myhost.local 192.168.1.0/24; subnets capped at {MAX_CIDR_HOSTS} hosts); "
+        "diff mode: exactly two saved scan JSON files (old then new)",
     )
     parser.add_argument(
         "-p",
@@ -199,6 +201,20 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         parser.error("timeout must be a positive finite number")
 
     try:
+        if args.mode == "diff":
+            if len(args.targets) != 2:
+                parser.error(
+                    "diff mode requires exactly two saved scan files: "
+                    "portwatch --mode diff OLD.json NEW.json"
+                )
+            diff = compare_files(args.targets[0], args.targets[1])
+            if args.output_format == "json":
+                rendered = json.dumps(diff.as_dict(), indent=2)
+            else:
+                rendered = render_diff_table(diff)
+            _emit(rendered, args.output_file, sys.stdout, sys.stderr)
+            return exit_code_for(diff)
+
         if args.mode == "local":
             records = scan_local_ports(protocol=args.protocol)
             if args.output_format == "json":

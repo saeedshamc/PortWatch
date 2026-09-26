@@ -1,0 +1,122 @@
+"""Concurrent asynchronous TCP connect scanner."""
+
+from __future__ import annotations
+
+import asyncio
+from typing import Iterable, Optional, Sequence
+
+from portwatch.models import PortResult, RemoteScanResult
+from portwatch.targets import Target
+
+
+async def _resolve(target: Target) -> Optional[str]:
+    """Resolve a target hostname to its primary IPv4/IPv6 address, if needed."""
+    if target.is_ip:
+        return target.host
+    try:
+        infos = await asyncio.get_running_loop().getaddrinfo(
+            target.host, None, family=0, type=asyncio.socket.SOCK_STREAM
+        )
+    except OSError:
+        return None
+    for family, _type, _proto, _canonname, sockaddr in infos:
+        return str(sockaddr[0])
+    return None
+
+
+async def _probe_port(
+    host: str,
+    port: int,
+    timeout: float,
+    semaphore: asyncio.Semaphore,
+    grab_banner: bool,
+) -> PortResult:
+    """Attempt one TCP connection; optionally read an identifying banner."""
+    async with semaphore:
+        try:
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection(host, port), timeout=timeout
+            )
+        except (OSError, asyncio.TimeoutError) as exc:
+            name = type(exc).__name__
+            if isinstance(exc, asyncio.TimeoutError):
+                detail = "timed out"
+            elif name == "ConnectionRefusedError":
+                detail = "connection refused"
+            else:
+                detail = str(exc) or name.lower()
+            return PortResult(host=host, port=port, open=False, error=detail)
+
+        banner = None
+        service = None
+        if grab_banner:
+            from portwatch.banner import grab_banner as _grab, identify_service
+
+            raw = await _grab(reader, timeout=timeout)
+            if raw:
+                banner = raw
+                service = identify_service(banner)
+        writer.close()
+        try:
+            await writer.wait_closed()
+        except OSError:
+            pass
+        return PortResult(host=host, port=port, open=True, banner=banner, service=service)
+
+
+async def scan_remote(
+    targets: Sequence[Target],
+    ports: Sequence[int],
+    concurrency: int = 100,
+    timeout: float = 2.0,
+    grab_banner: bool = True,
+) -> list[RemoteScanResult]:
+    """Scan each target's ports concurrently and group results per host.
+
+    ``concurrency`` bounds the number of in-flight connection attempts and
+    ``timeout`` limits each individual TCP connect (and banner read).
+    """
+    if concurrency < 1:
+        raise ValueError("concurrency must be >= 1")
+    if timeout <= 0:
+        raise ValueError("timeout must be > 0")
+    semaphore = asyncio.Semaphore(concurrency)
+
+    async def scan_target(target: Target) -> RemoteScanResult:
+        resolved = await _resolve(target)
+        host_key = target.raw if not target.is_ip else target.host
+        results = await asyncio.gather(
+            *(
+                _probe_port(target.host, port, timeout, semaphore, grab_banner)
+                for port in ports
+            )
+        )
+        open_ports = [result for result in results if result.open]
+        open_ports.sort(key=lambda r: r.port)
+        return RemoteScanResult(
+            host=host_key,
+            resolved_ip=resolved,
+            ports_scanned=len(ports),
+            open_ports=open_ports,
+        )
+
+    return list(await asyncio.gather(*(scan_target(t) for t in targets)))
+
+
+def scan_targets_sync(
+    targets: Iterable[Target],
+    ports: Sequence[int],
+    concurrency: int = 100,
+    timeout: float = 2.0,
+    grab_banner: bool = True,
+) -> list[RemoteScanResult]:
+    """Synchronous entry point that runs the async scanner on a fresh loop."""
+    return asyncio.run(
+        scan_remote(
+            list(targets),
+            list(ports),
+            concurrency=concurrency,
+            timeout=timeout,
+            grab_banner=grab_banner,
+        )
+    )

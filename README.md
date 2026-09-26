@@ -1,5 +1,7 @@
 # PortWatch
 
+[![CI](https://github.com/saeedshamc/PortWatch/actions/workflows/ci.yml/badge.svg)](https://github.com/saeedshamc/PortWatch/actions/workflows/ci.yml)
+
 A cross-platform port scanning toolkit with two modes:
 
 - **Local scan** — list every listening TCP/UDP socket on the current machine, together with the owning process (PID, process name, executable path).
@@ -181,6 +183,8 @@ See [docs/USAGE.md](docs/USAGE.md) for the full reference, exit codes, and troub
 pip install -r requirements-dev.txt
 python -m pytest
 ```
+
+Continuous integration runs the full test suite on Linux, Windows and macOS (Python 3.10 and 3.13) for every push and pull request via GitHub Actions (`.github/workflows/ci.yml`).
 
 ## Project layout
 

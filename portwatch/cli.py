@@ -75,6 +75,14 @@ def build_parser() -> argparse.ArgumentParser:
         dest="output_format",
         help="output format (default: table)",
     )
+    parser.add_argument(
+        "-o",
+        "--output",
+        metavar="FILE",
+        dest="output_file",
+        help="also write the result to FILE as UTF-8 with LF line endings; "
+        "the same output is still printed to the console",
+    )
     parser.add_argument("--version", action="version", version=f"portwatch {__version__}")
     return parser
 
@@ -155,6 +163,35 @@ def _print_json(payload: object) -> None:
     _write(json.dumps(payload, indent=2))
 
 
+def _open_output(path: str) -> IO[str]:
+    """Open an output file as UTF-8 with LF line endings on every platform.
+
+    Text mode translates ``\\n`` to the platform line ending by default;
+    ``newline="\\n"`` disables that so files are byte-identical across
+    Windows, macOS and Linux. Encoding is pinned to UTF-8 regardless of the
+    console codepage.
+    """
+    return open(path, "w", encoding="utf-8", newline="\n")
+
+
+def _emit(
+    text: str,
+    output_file: Optional[str],
+    stdout: IO[str],
+    stderr: IO[str],
+) -> None:
+    """Print a rendered result to the console and optionally save it to a file."""
+    _write(text, stream=stdout)
+    if output_file:
+        try:
+            handle = _open_output(output_file)
+        except OSError as exc:
+            print(f"error: cannot write {output_file!r}: {exc}", file=stderr)
+            raise SystemExit(2) from None
+        with handle:
+            _write(text, stream=handle)
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -165,9 +202,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         if args.mode == "local":
             records = scan_local_ports(protocol=args.protocol)
             if args.output_format == "json":
-                _print_json([record.as_dict() for record in records])
+                rendered = json.dumps([record.as_dict() for record in records], indent=2)
             else:
-                _write(_render_local_table(records))
+                rendered = _render_local_table(records)
+            _emit(rendered, args.output_file, sys.stdout, sys.stderr)
             return 0
 
         if not args.targets:
@@ -183,9 +221,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             probe=args.probe,
         )
         if args.output_format == "json":
-            _print_json([result.as_dict() for result in results])
+            rendered = json.dumps([result.as_dict() for result in results], indent=2)
         else:
-            _write(_render_remote_table(results))
+            rendered = _render_remote_table(results)
+        _emit(rendered, args.output_file, sys.stdout, sys.stderr)
         return 0
     except (TargetError, LocalScanError) as exc:
         print(f"error: {exc}", file=sys.stderr)

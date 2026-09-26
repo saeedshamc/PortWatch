@@ -125,6 +125,13 @@ JSON output:
 python -m portwatch --mode remote 127.0.0.1 -p 8080 --probe -f json
 ```
 
+Save any scan directly to a file with guaranteed UTF-8 encoding and LF line endings on every platform (see [docs/EXPORT.md](docs/EXPORT.md)):
+
+```bash
+python -m portwatch -f json -o listeners.json
+python -m portwatch --mode remote 192.168.1.0/24 -p 1-1024 -o subnet.json
+```
+
 ```json
 [
   {
@@ -157,6 +164,7 @@ python -m portwatch --mode remote 127.0.0.1 -p 8080 --probe -f json
 | `--probe` | off | Remote mode: send an HTTP HEAD request to open ports before reading the banner |
 | `--protocol {inet,tcp,udp}` | `inet` | Local mode: socket protocols to list |
 | `-f, --format {table,json}` | `table` | Output format |
+| `-o, --output FILE` | — | Also write the result to FILE as UTF-8 with LF line endings; console output is unaffected |
 | `--version` | — | Print version and exit |
 
 See [docs/USAGE.md](docs/USAGE.md) for the full reference, exit codes, and troubleshooting, and [docs/EXPORT.md](docs/EXPORT.md) for saving output to files on Windows and Linux (PowerShell/cmd/bash examples, JSON post-processing with jq and PowerShell).

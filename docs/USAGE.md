@@ -120,6 +120,17 @@ Aligned columns; remote mode appends a summary line:
 
 Only open ports are listed under `open_ports`. Closed and filtered ports are not included; per-target totals appear in `ports_scanned`.
 
+### Writing to a file with `--output`
+
+`-o/--output` saves the rendered result (table or JSON, exactly as printed) to a file while still showing it in the console:
+
+```bash
+python -m portwatch -f json -o listeners.json
+python -m portwatch --mode remote 192.168.1.0/24 -p 1-1024 -o subnet.txt
+```
+
+Files are always written as UTF-8 with LF line endings, on every platform, independent of the console codepage. If the file cannot be opened, the error goes to stderr and PortWatch exits with code 2 after the scan; existing files are overwritten. See [EXPORT.md](EXPORT.md) for shell-redirection alternatives and JSON post-processing.
+
 ## Exit codes
 
 | Code | Meaning |

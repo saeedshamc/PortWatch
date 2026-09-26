@@ -11,6 +11,24 @@ import pytest
 from portwatch.cli import build_parser, main
 
 
+@pytest.fixture()
+def http_port():
+    class Handler(BaseHTTPRequestHandler):
+        def do_HEAD(self):
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, *args):
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    yield server.server_address[1]
+    server.shutdown()
+    server.server_close()
+
+
 class TestParser:
     def test_defaults(self):
         args = build_parser().parse_args([])
@@ -72,23 +90,6 @@ class TestLocalMode:
 
 
 class TestRemoteMode:
-    @pytest.fixture()
-    def http_port(self):
-        class Handler(BaseHTTPRequestHandler):
-            def do_HEAD(self):
-                self.send_response(200)
-                self.end_headers()
-
-            def log_message(self, *args):
-                pass
-
-        server = HTTPServer(("127.0.0.1", 0), Handler)
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
-        thread.start()
-        yield server.server_address[1]
-        server.shutdown()
-        server.server_close()
-
     def test_table_finds_http_service(self, http_port, capsys):
         code = main(["--mode", "remote", "127.0.0.1", "-p", str(http_port),
                      "--probe", "-c", "10", "-t", "2"])
@@ -114,6 +115,42 @@ class TestRemoteMode:
     def test_invalid_cidr_exit_code(self, capsys):
         assert main(["--mode", "remote", "300.300.300.300/24"]) == 2
         assert "error" in capsys.readouterr().err.lower()
+
+
+class TestOutputFile:
+    def test_json_file_is_utf8_lf(self, tmp_path, capsys, http_port):
+        target = tmp_path / "out.json"
+        code = main(["--mode", "remote", "127.0.0.1", "-p", str(http_port),
+                     "--probe", "-f", "json", "-o", str(target)])
+        assert code == 0
+        data = target.read_bytes()
+        assert b"\r\n" not in data
+        payload = json.loads(data.decode("utf-8"))
+        assert payload[0]["open_ports"][0]["port"] == http_port
+
+    def test_table_file_matches_console(self, tmp_path, capsys):
+        target = tmp_path / "out.txt"
+        code = main(["--protocol", "tcp", "-o", str(target)])
+        assert code == 0
+        data = target.read_bytes()
+        assert b"\r\n" not in data
+        assert "PROTO" in data.decode("utf-8")
+        assert "PROTO" in capsys.readouterr().out
+
+    def test_console_receives_output_alongside_file(self, tmp_path, capsys):
+        target = tmp_path / "out.txt"
+        code = main(["--protocol", "tcp", "-o", str(target)])
+        assert code == 0
+        assert capsys.readouterr().out.strip()
+
+    def test_unwritable_path_exits_cleanly(self, tmp_path, capsys):
+        blocker = tmp_path / "file.txt"
+        blocker.write_text("blocker", encoding="utf-8")
+        target = blocker / "nested" / "out.txt"  # parent is a file
+        with pytest.raises(SystemExit) as excinfo:
+            main(["--protocol", "tcp", "-o", str(target)])
+        assert excinfo.value.code == 2
+        assert "cannot write" in capsys.readouterr().err
 
 
 class TestOutputEncoding:

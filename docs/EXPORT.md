@@ -5,6 +5,15 @@ How to save PortWatch results to files and post-process them on Windows and Linu
 PortWatch always prints results to standard output, so every ordinary redirection technique works. Use `-f json` whenever the file will be read by another program; use the default table format for human-readable reports.
 
 > **Recommended:** add `-f json` for anything you plan to parse, sort, diff, or archive. The table format is for reading in a terminal.
+>
+> **Simplest option:** let PortWatch write the file itself with `-o FILE` — the file is always UTF-8 with LF line endings on every platform, with none of the codepage caveats below:
+>
+> ```bash
+> python -m portwatch -f json -o ports.json
+> python -m portwatch --mode remote 192.168.1.0/24 -p 1-1024 -o subnet.json
+> ```
+>
+> The console still shows the same output, and the sections below cover shell redirection when you need pipelines instead.
 
 ## Windows
 
@@ -40,6 +49,8 @@ python -m portwatch --mode remote 10.0.0.5 -p 1-1024 > scan.txt
 Without `chcp 65001`, files are written in the active codepage (for example cp437 or cp1252); PortWatch replaces characters that cannot be encoded instead of failing, but JSON parsed downstream may contain `?` where other characters were.
 
 ### Verify the encoding (optional)
+
+Note that `-o FILE` sidesteps all of the Windows codepage concerns above — the file is written by Python with pinned UTF-8 encoding, not by the shell.
 
 ```powershell
 Get-Content ports.json -Encoding utf8 | ConvertFrom-Json

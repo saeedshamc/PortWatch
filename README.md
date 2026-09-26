@@ -159,7 +159,7 @@ python -m portwatch --mode remote 127.0.0.1 -p 8080 --probe -f json
 | `-f, --format {table,json}` | `table` | Output format |
 | `--version` | — | Print version and exit |
 
-See [docs/USAGE.md](docs/USAGE.md) for the full reference, exit codes, and troubleshooting.
+See [docs/USAGE.md](docs/USAGE.md) for the full reference, exit codes, and troubleshooting, and [docs/EXPORT.md](docs/EXPORT.md) for saving output to files on Windows and Linux (PowerShell/cmd/bash examples, JSON post-processing with jq and PowerShell).
 
 ## Notes
 
@@ -179,7 +179,7 @@ python -m pytest
 ```
 portwatch/        source package (cli, local_scan, remote_scan, banner, targets, models)
 tests/            pytest suite
-docs/             detailed usage documentation
+docs/             USAGE.md (reference) and EXPORT.md (saving output on Windows/Linux)
 ```
 
 ## License

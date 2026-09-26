@@ -5,10 +5,10 @@ Detailed reference for both scan modes, all flags, output formats, and common tr
 ## Synopsis
 
 ```
-python -m portwatch [--mode {local,remote}] [TARGET ...]
+python -m portwatch [--mode {local,remote,diff}] [TARGET ...]
                     [-p SPEC] [-c N] [-t SECONDS] [--probe]
                     [--protocol {inet,tcp,udp}]
-                    [-f {table,json}] [--version]
+                    [-f {table,json}] [-o FILE] [--version]
 ```
 
 ## Local mode
@@ -138,6 +138,32 @@ Files are always written as UTF-8 with LF line endings, on every platform, indep
 | `0` | Scan completed |
 | `2` | Usage or input error (bad port spec, invalid target, unreadable socket table) |
 | `130` | Interrupted with Ctrl+C |
+
+## Diff mode
+
+Compares two saved PortWatch JSON scans (produced with `-f json -o file.json`) of the same host and reports port transitions:
+
+```bash
+python -m portwatch --mode diff old.json new.json
+```
+
+Detected changes:
+
+- **NEWLY OPENED** — ports open in the new scan but not the old one, with service and banner.
+- **NEWLY CLOSED** — ports open in the old scan but not the new one.
+- **SERVICE CHANGED** — ports open in both scans where the identified service differs (e.g. `http -> redis`).
+
+The summary line counts all transitions and unchanged ports. With `-f json` the result is a single JSON object (`host`, `opened`, `closed`, `changed_service`, `unchanged_count`); it can be written to a file with `-o` like any other output.
+
+### Exit codes
+
+The diff mode extends the standard exit codes: `2` also means **differences were found** (as well as input errors — input errors print `error:` to stderr, differences do not), and `0` means the two scans match. This makes it usable as a change gate:
+
+```bash
+python -m portwatch --mode diff old.json new.json || echo "port drift detected"
+```
+
+Both files must come from the same host (mismatched hosts are an input error) and must contain exactly one target each. Local-scan files (flat arrays of listener records) can also be diffed; the label is then `local`.
 
 ## Examples
 

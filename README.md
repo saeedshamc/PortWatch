@@ -2,10 +2,11 @@
 
 [![CI](https://github.com/saeedshamc/PortWatch/actions/workflows/ci.yml/badge.svg)](https://github.com/saeedshamc/PortWatch/actions/workflows/ci.yml)
 
-A cross-platform port scanning toolkit with two modes:
+A cross-platform port scanning toolkit with three modes:
 
 - **Local scan** — list every listening TCP/UDP socket on the current machine, together with the owning process (PID, process name, executable path).
 - **Remote scan** — concurrently scan one or more targets (IPs, hostnames, or CIDR subnets) for open TCP ports, with banner grabbing to identify the running service.
+- **Diff** — compare two saved scan files and report newly opened, newly closed, and service-changed ports (exit code 2 on any change, so it can gate CI jobs).
 
 ## Features
 
@@ -154,11 +155,42 @@ python -m portwatch --mode remote 192.168.1.0/24 -p 1-1024 -o subnet.json
 ]
 ```
 
+### Diff mode
+
+Compare two saved scans of the same host (saved with `-f json -o file.json`):
+
+```bash
+python -m portwatch --mode remote 10.0.0.5 -p 1-1024 -f json -o old.json
+# ...time passes...
+python -m portwatch --mode remote 10.0.0.5 -p 1-1024 -f json -o new.json
+python -m portwatch --mode diff old.json new.json
+```
+
+Sample output:
+
+```
+Port changes for 10.0.0.5:
+
+NEWLY OPENED:
+  8080   http
+
+NEWLY CLOSED:
+  22     ssh  (SSH-2.0-OpenSSH_9.6)
+
+SERVICE CHANGED:
+  (none)
+
+1 opened, 1 closed, 0 service change(s), 0 unchanged
+```
+
+With `-f json` the diff is emitted as a JSON object instead. The exit code is `2` when any difference exists and `0` when the scans match, which makes it usable as a change gate in scripts and CI jobs.
+
 ## Flags
 
 | Flag | Default | Description |
 | --- | --- | --- |
-| `--mode {local,remote}` | `local` | Scan mode |
+| `--mode {local,remote,diff}` | `local` | Scan mode |
+| `TARGET ...` (diff mode) | — | Exactly two saved scan JSON files, old then new |
 | `TARGET ...` | — | Remote mode: IPs, hostnames, or CIDR subnets |
 | `-p, --ports SPEC` | `1-1024` | Remote mode: port spec, e.g. `80,443,8000-8010` |
 | `-c, --concurrency N` | `100` | Remote mode: maximum simultaneous connections |

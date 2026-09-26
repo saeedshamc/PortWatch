@@ -135,7 +135,15 @@ python -c "import json,sys; [print(f\"{p['host']}:{p['port']}\") for t in json.l
 
 ## Quick diff between two scans
 
-With jq (requires `-f json` output from both scans, one object per line):
+The built-in way works on every platform and also flags service changes:
+
+```bash
+python -m portwatch --mode diff old.json new.json
+```
+
+The exit code is `2` when anything changed and `0` when the scans match, so it can stop a script or CI job on drift. Local-scan files (flat listener arrays) can be diffed the same way.
+
+With jq instead (requires `-f json` output from both scans):
 
 ```bash
 python -m portwatch --mode remote 10.0.0.5 -p 1-1024 -f json \

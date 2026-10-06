@@ -1,7 +1,6 @@
 """Tests for local listening-socket enumeration."""
 
 import socket
-import threading
 
 import psutil
 

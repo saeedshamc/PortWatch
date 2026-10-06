@@ -9,8 +9,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 
 class DiffError(ValueError):
@@ -59,8 +58,11 @@ def load_scan(path: str) -> tuple[str, dict[int, dict[str, Any]]]:
         for record in local:
             port = record.get("local_port")
             if isinstance(port, int):
+                service = (
+                    f"{record.get('protocol', '?').lower()}/{record.get('process_name') or '?'}"
+                )
                 ports[port] = {
-                    "service": f"{record.get('protocol', '?').lower()}/{record.get('process_name') or '?'}",
+                    "service": service,
                     "banner": record.get("executable"),
                 }
         return "local", ports
@@ -108,16 +110,24 @@ def diff_scans(old: tuple[str, dict[int, dict[str, Any]]],
         was = old_ports.get(port)
         now = new_ports.get(port)
         if was is None and now is not None:
-            result.opened.append({"port": port, "service": _service(now), "banner": now.get("banner")})
+            result.opened.append(
+                {"port": port, "service": _service(now), "banner": now.get("banner")}
+            )
         elif was is not None and now is None:
-            result.closed.append({"port": port, "service": _service(was), "banner": was.get("banner")})
+            result.closed.append(
+                {"port": port, "service": _service(was), "banner": was.get("banner")}
+            )
         elif _service(was) != _service(now):
             result.changed_service.append(
                 {"port": port, "old_service": _service(was), "new_service": _service(now)}
             )
-            result.unchanged.append({"port": port, "service": _service(now), "banner": now.get("banner")})
+            result.unchanged.append(
+                {"port": port, "service": _service(now), "banner": now.get("banner")}
+            )
         else:
-            result.unchanged.append({"port": port, "service": _service(now), "banner": now.get("banner")})
+            result.unchanged.append(
+                {"port": port, "service": _service(now), "banner": now.get("banner")}
+            )
     return result
 
 
@@ -158,7 +168,10 @@ def render_diff_table(diff: ScanDiff) -> str:
     )
     section(
         "SERVICE CHANGED:",
-        [(item["port"], f"{item['old_service']} -> {item['new_service']}") for item in diff.changed_service],
+        [
+            (item["port"], f"{item['old_service']} -> {item['new_service']}")
+            for item in diff.changed_service
+        ],
         "(none)",
     )
     summary = (

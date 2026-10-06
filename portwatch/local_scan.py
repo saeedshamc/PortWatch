@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Optional
-
 import psutil
 
 from portwatch.models import PortRecord
@@ -21,7 +19,7 @@ _KIND_MAP: dict[str, list[str]] = {
 }
 
 
-def _describe_process(pid: Optional[int]) -> tuple[Optional[str], Optional[str], Optional[str]]:
+def _describe_process(pid: int | None) -> tuple[str | None, str | None, str | None]:
     """Return (name, executable, command_line) for a PID, tolerating access denial."""
     if pid is None or pid <= 0:
         return None, None, None

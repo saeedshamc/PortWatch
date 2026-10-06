@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import ipaddress
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable
 
 #: Default remote-scan range when --ports is not given.
 DEFAULT_PORT_SPEC = "1-1024"
@@ -80,7 +80,11 @@ def expand_targets(inputs: Iterable[str], max_cidr_hosts: int = MAX_CIDR_HOSTS) 
                     f"subnet {entry!r} spans more than {max_cidr_hosts} hosts; "
                     "refusing to expand"
                 )
-            hosts = list(network.hosts()) if network.num_addresses > 1 else [network.network_address]
+            hosts = (
+                list(network.hosts())
+                if network.num_addresses > 1
+                else [network.network_address]
+            )
             for address in hosts:
                 targets.setdefault(str(address), Target(raw=entry, host=str(address), is_ip=True))
         else:

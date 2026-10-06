@@ -6,14 +6,21 @@ import argparse
 import json
 import math
 import sys
-from typing import IO, Optional, Sequence
+from collections.abc import Sequence
+from typing import IO
 
 from portwatch import __version__
 from portwatch.diffing import compare_files, exit_code_for, render_diff_table
 from portwatch.local_scan import LocalScanError, scan_local_ports
 from portwatch.models import PortRecord, RemoteScanResult
 from portwatch.remote_scan import scan_targets_sync
-from portwatch.targets import DEFAULT_PORT_SPEC, MAX_CIDR_HOSTS, TargetError, expand_targets, parse_port_spec
+from portwatch.targets import (
+    DEFAULT_PORT_SPEC,
+    MAX_CIDR_HOSTS,
+    TargetError,
+    expand_targets,
+    parse_port_spec,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -145,7 +152,7 @@ def _truncate(text: str, width: int) -> str:
     return text if len(text) <= width else text[: width - 3] + "..."
 
 
-def _write(text: str, stream: Optional[IO[str]] = None) -> None:
+def _write(text: str, stream: IO[str] | None = None) -> None:
     """Print text, replacing characters the output stream cannot encode.
 
     Legacy console codepages (e.g. Windows cp437/cp1252) cannot represent
@@ -178,7 +185,7 @@ def _open_output(path: str) -> IO[str]:
 
 def _emit(
     text: str,
-    output_file: Optional[str],
+    output_file: str | None,
     stdout: IO[str],
     stderr: IO[str],
 ) -> None:
@@ -194,7 +201,7 @@ def _emit(
             _write(text, stream=handle)
 
 
-def main(argv: Optional[Sequence[str]] = None) -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     if not math.isfinite(args.timeout) or args.timeout <= 0:

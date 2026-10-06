@@ -9,7 +9,7 @@ import pytest
 
 from portwatch.models import PortResult
 from portwatch.remote_scan import _probe_port, scan_remote, scan_targets_sync
-from portwatch.targets import Target, expand_targets
+from portwatch.targets import expand_targets
 
 
 def _listener() -> tuple[socket.socket, int]:
@@ -129,7 +129,7 @@ class TestScanRemoteAsync:
                     server.settimeout(0.5)
                     try:
                         conn, _ = server.accept()
-                    except socket.timeout:
+                    except TimeoutError:
                         break
                     with lock:
                         current += 1

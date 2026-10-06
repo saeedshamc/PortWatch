@@ -2,7 +2,6 @@
 
 import io
 import json
-import socket
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 

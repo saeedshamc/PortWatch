@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import socket
-from typing import Iterable, Optional, Sequence
+from collections.abc import Iterable, Sequence
 
-from portwatch.banner import build_http_probe, grab_banner as _grab_banner, identify_service
+from portwatch.banner import build_http_probe, identify_service
+from portwatch.banner import grab_banner as _grab_banner
 from portwatch.models import PortResult, RemoteScanResult
 from portwatch.targets import Target
 

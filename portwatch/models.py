@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 
 @dataclass
@@ -13,10 +13,10 @@ class PortRecord:
     protocol: str
     local_address: str
     local_port: int
-    pid: Optional[int] = None
-    process_name: Optional[str] = None
-    executable: Optional[str] = None
-    command_line: Optional[str] = None
+    pid: int | None = None
+    process_name: str | None = None
+    executable: str | None = None
+    command_line: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -29,9 +29,9 @@ class PortResult:
     host: str
     port: int
     open: bool
-    error: Optional[str] = None
-    banner: Optional[str] = None
-    service: Optional[str] = None
+    error: str | None = None
+    banner: str | None = None
+    service: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -42,7 +42,7 @@ class RemoteScanResult:
     """Aggregated scan results for one target host."""
 
     host: str
-    resolved_ip: Optional[str] = None
+    resolved_ip: str | None = None
     ports_scanned: int = 0
     open_ports: list[PortResult] = field(default_factory=list)
 

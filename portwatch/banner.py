@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import re
-from typing import Optional
 
 #: How many bytes of a banner to keep (banner is truncated beyond this).
 MAX_BANNER_LENGTH = 256
@@ -45,7 +44,7 @@ _PORT_ALIASES: dict[int, str] = {
 }
 
 
-async def grab_banner(reader: asyncio.StreamReader, timeout: float = 2.0) -> Optional[str]:
+async def grab_banner(reader: asyncio.StreamReader, timeout: float = 2.0) -> str | None:
     """Read the first bytes a service sends after accepting the connection.
 
     Returns a cleaned single-line-safe string, or ``None`` when the server
@@ -73,7 +72,7 @@ def build_http_probe(host: str, port: int) -> bytes:
     ).encode("ascii")
 
 
-def identify_service(banner: Optional[str], port: Optional[int] = None) -> Optional[str]:
+def identify_service(banner: str | None, port: int | None = None) -> str | None:
     """Guess the service from a banner pattern, falling back to the port number."""
     if banner:
         for name, pattern in _SERVICE_PATTERNS:

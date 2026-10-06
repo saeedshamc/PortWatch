@@ -15,7 +15,7 @@ A cross-platform port scanning toolkit with three modes:
 - Banner grabbing: passive read for greeting services (SSH, FTP, SMTP, POP3, IMAP, VNC, Redis, MySQL) and an optional HTTP HEAD probe for silent web servers
 - Service fingerprinting from banner patterns with well-known-port fallback
 - Targets: single IPs (IPv4/IPv6), hostnames, and CIDR subnets (with a safety cap on subnet size)
-- Structured JSON output or aligned CLI tables
+- Structured JSON, CSV (RFC 4180), and NDJSON output, or aligned CLI tables
 
 ## Requirements
 
@@ -197,7 +197,7 @@ With `-f json` the diff is emitted as a JSON object instead. The exit code is `2
 | `-t, --timeout SECONDS` | `2.0` | Remote mode: per-connection timeout |
 | `--probe` | off | Remote mode: send an HTTP HEAD request to open ports before reading the banner |
 | `--protocol {inet,tcp,udp}` | `inet` | Local mode: socket protocols to list |
-| `-f, --format {table,json}` | `table` | Output format |
+| `-f, --format {table,json,csv,ndjson}` | `table` | Output format |
 | `-o, --output FILE` | — | Also write the result to FILE as UTF-8 with LF line endings; console output is unaffected |
 | `--version` | — | Print version and exit |
 

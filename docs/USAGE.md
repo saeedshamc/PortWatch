@@ -120,6 +120,36 @@ Aligned columns; remote mode appends a summary line:
 
 Only open ports are listed under `open_ports`. Closed and filtered ports are not included; per-target totals appear in `ports_scanned`.
 
+### CSV (`-f csv`)
+
+Spreadsheet-friendly rows with a header line, RFC 4180 quoting, and the project's
+UTF-8 / LF line-ending guarantees:
+
+- **Local mode** — one row per listening socket with the same fields as JSON
+  (`protocol,local_address,local_port,pid,process_name,executable,command_line`).
+- **Remote mode** — one row per **open port**
+  (`host,port,service,banner`); targets with nothing open contribute no rows.
+
+```bash
+python -m portwatch -f csv -o listeners.csv
+python -m portwatch --mode remote 10.0.0.5 -p 22,80,443 -f csv
+```
+
+### NDJSON (`-f ndjson`)
+
+One JSON object per line — ideal for appending to rolling logs, streaming with
+`grep`/`jq -c`, or feeding line-oriented tools:
+
+```bash
+python -m portwatch -f ndjson >> portwatch.log
+python -m portwatch --mode remote 10.0.0.5 -p 22,80,443 -f ndjson | jq -c 'select(.service == "ssh")'
+```
+
+- **Local mode** — one line per listener record.
+- **Remote mode** — one line per open port with `host`, `port`, `service`, `banner`.
+
+Diff mode ignores `csv`/`ndjson` and renders its table or JSON object as usual.
+
 ### Writing to a file with `--output`
 
 `-o/--output` saves the rendered result (table or JSON, exactly as printed) to a file while still showing it in the console:
@@ -153,7 +183,7 @@ Detected changes:
 - **NEWLY CLOSED** — ports open in the old scan but not the new one.
 - **SERVICE CHANGED** — ports open in both scans where the identified service differs (e.g. `http -> redis`).
 
-The summary line counts all transitions and unchanged ports. With `-f json` the result is a single JSON object (`host`, `opened`, `closed`, `changed_service`, `unchanged_count`); it can be written to a file with `-o` like any other output.
+The summary line counts all transitions and unchanged ports. With `-f json` the result is a single JSON object (`host`, `opened`, `closed`, `changed_service`, `unchanged_count`); it can be written to a file with `-o` like any other output. `-f csv` and `-f ndjson` are ignored in diff mode; use `table` (default) or `json` there.
 
 ### Exit codes
 

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import csv
+import io
 import json
 import math
 import sys
@@ -21,6 +23,12 @@ from portwatch.targets import (
     expand_targets,
     parse_port_spec,
 )
+
+#: Formats that stream one record per line instead of a single document.
+LINE_FORMATS = ("ndjson",)
+
+#: Formats accepted by ``--format``.
+OUTPUT_FORMATS = ("table", "json", "csv", "ndjson")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -79,10 +87,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "-f",
         "--format",
-        choices=("table", "json"),
+        choices=OUTPUT_FORMATS,
         default="table",
         dest="output_format",
-        help="output format (default: table)",
+        help="output format: table, json, csv (spreadsheet-friendly), or "
+        "ndjson (one JSON object per line for logs and grep) (default: table)",
     )
     parser.add_argument(
         "-o",
@@ -146,6 +155,70 @@ def _format_table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> str:
     for row in rows:
         lines.append("  ".join(cell.ljust(widths[index]) for index, cell in enumerate(row)))
     return "\n".join(lines)
+
+
+#: Column order for local-mode CSV output.
+_LOCAL_CSV_FIELDS = (
+    "protocol",
+    "local_address",
+    "local_port",
+    "pid",
+    "process_name",
+    "executable",
+    "command_line",
+)
+
+#: Column order for remote-mode CSV and NDJSON output (one row per open port).
+_REMOTE_CSV_FIELDS = ("host", "port", "service", "banner")
+
+
+def _csv_document(rows: Sequence[dict[str, object]], fields: Sequence[str]) -> str:
+    """Render rows as RFC 4180 CSV with LF line endings (project convention)."""
+    buffer = io.StringIO()
+    writer = csv.DictWriter(
+        buffer, fieldnames=list(fields), extrasaction="ignore", lineterminator="\n"
+    )
+    writer.writeheader()
+    writer.writerows(rows)
+    return buffer.getvalue().rstrip("\r\n")
+
+
+def _remote_open_rows(results: Sequence[RemoteScanResult]) -> list[dict[str, object]]:
+    """Flatten remote results to one row per open port (shared by CSV/NDJSON)."""
+    rows: list[dict[str, object]] = []
+    for result in results:
+        for port in result.open_ports:
+            rows.append(
+                {
+                    "host": result.host,
+                    "port": port.port,
+                    "service": port.service or "",
+                    "banner": port.banner or "",
+                }
+            )
+    return rows
+
+
+def _render_local(records: Sequence[PortRecord], output_format: str) -> str:
+    """Render local scan records in the requested output format."""
+    if output_format == "csv":
+        return _csv_document([record.as_dict() for record in records], _LOCAL_CSV_FIELDS)
+    if output_format == "ndjson":
+        return "\n".join(json.dumps(record.as_dict()) for record in records)
+    if output_format == "json":
+        return json.dumps([record.as_dict() for record in records], indent=2)
+    return _render_local_table(records)
+
+
+def _render_remote(results: Sequence[RemoteScanResult], output_format: str) -> str:
+    """Render remote scan results in the requested output format."""
+    if output_format == "csv":
+        return _csv_document(_remote_open_rows(results), _REMOTE_CSV_FIELDS)
+    if output_format == "ndjson":
+        return "\n".join(json.dumps(row) for row in _remote_open_rows(results))
+    if output_format == "json":
+        return json.dumps([result.as_dict() for result in results], indent=2)
+    return _render_remote_table(results)
 
 
 def _truncate(text: str, width: int) -> str:
@@ -224,10 +297,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         if args.mode == "local":
             records = scan_local_ports(protocol=args.protocol)
-            if args.output_format == "json":
-                rendered = json.dumps([record.as_dict() for record in records], indent=2)
-            else:
-                rendered = _render_local_table(records)
+            rendered = _render_local(records, args.output_format)
             _emit(rendered, args.output_file, sys.stdout, sys.stderr)
             return 0
 
@@ -243,10 +313,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             grab_banner=True,
             probe=args.probe,
         )
-        if args.output_format == "json":
-            rendered = json.dumps([result.as_dict() for result in results], indent=2)
-        else:
-            rendered = _render_remote_table(results)
+        rendered = _render_remote(results, args.output_format)
         _emit(rendered, args.output_file, sys.stdout, sys.stderr)
         return 0
     except (TargetError, LocalScanError) as exc:

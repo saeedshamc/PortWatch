@@ -1,5 +1,6 @@
 """Tests for the command-line interface."""
 
+import csv as csv_module
 import io
 import json
 import threading
@@ -208,6 +209,72 @@ class TestOutputFile:
             main(["--protocol", "tcp", "-o", str(target)])
         assert excinfo.value.code == 2
         assert "cannot write" in capsys.readouterr().err
+
+
+class TestCsvAndNdjson:
+    def test_local_csv_header_and_rows(self, capsys):
+        assert main(["--protocol", "tcp", "-f", "csv"]) == 0
+        rows = list(csv_module.reader(io.StringIO(capsys.readouterr().out)))
+        assert rows[0] == [
+            "protocol", "local_address", "local_port", "pid",
+            "process_name", "executable", "command_line",
+        ]
+        assert len(rows) > 1
+        assert rows[1][0] == "TCP"
+        int(rows[1][2])  # local_port is numeric
+
+    def test_remote_csv_flattens_open_ports(self, http_port, capsys):
+        code = main(["--mode", "remote", "127.0.0.1", "-p", str(http_port),
+                     "--probe", "-f", "csv", "-c", "10", "-t", "2"])
+        assert code == 0
+        rows = list(csv_module.reader(io.StringIO(capsys.readouterr().out)))
+        assert rows[0] == ["host", "port", "service", "banner"]
+        assert rows[1] == ["127.0.0.1", str(http_port), "http", ""] or \
+               rows[1][2] == "http"
+
+    def test_remote_csv_no_open_ports_gives_header_only(self, capsys):
+        code = main(["--mode", "remote", "127.0.0.1", "-p", "1",
+                     "-f", "csv", "-c", "5", "-t", "0.5"])
+        assert code == 0
+        rows = list(csv_module.reader(io.StringIO(capsys.readouterr().out)))
+        assert rows == [["host", "port", "service", "banner"]]
+
+    def test_local_ndjson_is_one_object_per_line(self, capsys):
+        assert main(["--protocol", "tcp", "-f", "ndjson"]) == 0
+        lines = capsys.readouterr().out.strip().splitlines()
+        assert lines
+        records = [json.loads(line) for line in lines]
+        assert all("local_port" in record for record in records)
+
+    def test_remote_ndjson_is_one_object_per_open_port(self, http_port, capsys):
+        code = main(["--mode", "remote", "127.0.0.1", "-p", str(http_port),
+                     "--probe", "-f", "ndjson", "-c", "10", "-t", "2"])
+        assert code == 0
+        lines = capsys.readouterr().out.strip().splitlines()
+        records = [json.loads(line) for line in lines]
+        assert len(records) == 1
+        assert records[0]["host"] == "127.0.0.1"
+        assert records[0]["port"] == http_port
+        assert records[0]["service"] == "http"
+        assert records[0]["banner"] is not None
+
+    def test_csv_file_output_is_utf8_lf(self, tmp_path, capsys):
+        target = tmp_path / "out.csv"
+        code = main(["--protocol", "tcp", "-f", "csv", "-o", str(target)])
+        assert code == 0
+        data = target.read_bytes()
+        assert b"\r\n" not in data
+        rows = list(csv_module.reader(data.decode("utf-8").splitlines()))
+        assert rows[0][0] == "protocol"
+
+    def test_diff_mode_ignores_csv_and_renders_table(self, tmp_path, capsys):
+        old, new = tmp_path / "old.json", tmp_path / "new.json"
+        payload = json.dumps([{"host": "10.0.0.5", "resolved_ip": "10.0.0.5",
+                               "ports_scanned": 1, "open_ports": []}])
+        old.write_text(payload, encoding="utf-8")
+        new.write_text(payload, encoding="utf-8")
+        assert main(["--mode", "diff", str(old), str(new), "-f", "csv"]) == 0
+        assert "Port changes for 10.0.0.5:" in capsys.readouterr().out
 
 
 class TestOutputEncoding:

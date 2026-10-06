@@ -58,3 +58,15 @@ select = [
     "UP",  # pyupgrade
     "B",   # flake8-bugbear
 ]
+
+[tool.mypy]
+python_version = "3.10"
+files = ["portwatch"]
+strict = false
+warn_unused_ignores = true
+warn_redundant_casts = true
+no_implicit_optional = true
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+ignore_errors = true

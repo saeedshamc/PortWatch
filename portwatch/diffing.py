@@ -117,14 +117,15 @@ def diff_scans(old: tuple[str, dict[int, dict[str, Any]]],
             result.closed.append(
                 {"port": port, "service": _service(was), "banner": was.get("banner")}
             )
-        elif _service(was) != _service(now):
-            result.changed_service.append(
-                {"port": port, "old_service": _service(was), "new_service": _service(now)}
-            )
-            result.unchanged.append(
-                {"port": port, "service": _service(now), "banner": now.get("banner")}
-            )
-        else:
+        elif was is not None and now is not None:
+            if _service(was) != _service(now):
+                result.changed_service.append(
+                    {
+                        "port": port,
+                        "old_service": _service(was),
+                        "new_service": _service(now),
+                    }
+                )
             result.unchanged.append(
                 {"port": port, "service": _service(now), "banner": now.get("banner")}
             )

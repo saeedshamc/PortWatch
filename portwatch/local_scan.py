@@ -61,9 +61,14 @@ def scan_local_ports(protocol: str = "inet") -> list[PortRecord]:
                 "try running from an elevated prompt"
             ) from None
         for conn in connections:
-            if conn.laddr is None:
-                continue
-            key = (proto, str(conn.laddr.ip), int(conn.laddr.port))
+            # psutil types laddr as ``addr | tuple[str, int] | tuple[()]``;
+            # only the two-element shapes carry a listening address.
+            match conn.laddr:
+                case (str() as ip, int() as port):
+                    pass
+                case _:
+                    continue
+            key = (proto, ip, port)
             if key in seen:
                 continue
             seen.add(key)
@@ -71,8 +76,8 @@ def scan_local_ports(protocol: str = "inet") -> list[PortRecord]:
             records.append(
                 PortRecord(
                     protocol=proto.upper(),
-                    local_address=conn.laddr.ip,
-                    local_port=int(conn.laddr.port),
+                    local_address=ip,
+                    local_port=port,
                     pid=conn.pid,
                     process_name=name,
                     executable=exe,

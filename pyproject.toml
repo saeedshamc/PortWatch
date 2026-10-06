@@ -70,3 +70,18 @@ no_implicit_optional = true
 [[tool.mypy.overrides]]
 module = "tests.*"
 ignore_errors = true
+
+[tool.coverage.run]
+source = ["portwatch"]
+omit = ["portwatch/__main__.py"]
+
+[tool.coverage.report]
+# __main__.py is a two-line launcher exercised only by `python -m portwatch`.
+fail_under = 90
+precision = 1
+show_missing = true
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "raise AssertionError",
+    "raise NotImplementedError",
+]

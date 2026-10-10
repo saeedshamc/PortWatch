@@ -58,6 +58,13 @@ class TestParser:
         args = build_parser().parse_args(["--mode", "remote", "1.2.3.4", "-v"])
         assert args.verbose is True
 
+    def test_resolve_all_flag_defaults_false(self):
+        assert build_parser().parse_args([]).resolve_all is False
+        args = build_parser().parse_args(
+            ["--mode", "remote", "1.2.3.4", "--resolve-all"]
+        )
+        assert args.resolve_all is True
+
     def test_bad_mode_rejected(self):
         with pytest.raises(SystemExit):
             build_parser().parse_args(["--mode", "wizard"])
@@ -139,6 +146,19 @@ class TestRemoteMode:
                      "--probe", "-c", "10", "-t", "2"])
         assert code == 0
         assert capsys.readouterr().err == ""
+
+    def test_resolve_all_scans_every_address_of_localhost(self, http_port, capsys):
+        # localhost resolves to 127.0.0.1 and ::1; --resolve-all reports both.
+        code = main(["--mode", "remote", "localhost", "-p", str(http_port),
+                     "--resolve-all", "-f", "json", "-c", "10", "-t", "2"])
+        assert code == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert len(payload) == 2
+        assert {entry["resolved_ip"] for entry in payload} == {"127.0.0.1", "::1"}
+        # The IPv4 listener is open on 127.0.0.1 only.
+        by_ip = {entry["resolved_ip"]: entry for entry in payload}
+        assert by_ip["127.0.0.1"]["open_ports"][0]["port"] == http_port
+        assert by_ip["::1"]["open_ports"] == []
 
 
 class TestDiffMode:

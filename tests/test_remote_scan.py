@@ -115,6 +115,67 @@ class TestScanTargetsSync:
         assert results[0].open_ports == []
 
 
+class TestResolveAll:
+    def test_resolve_all_scans_every_address(self):
+        # localhost resolves to both 127.0.0.1 and ::1; bind only the IPv4
+        # listener so only that address reports the open port.
+        server, port = _listener()
+        try:
+            thread = _accept_and_close(server)
+            results = scan_targets_sync(
+                expand_targets(["localhost"]),
+                [port],
+                concurrency=10,
+                timeout=2.0,
+                grab_banner=False,
+                resolve_all=True,
+            )
+            thread.join(timeout=5)
+            # One result per resolved address, all labelled with the hostname.
+            assert len(results) == 2
+            assert {r.host for r in results} == {"localhost"}
+            assert {r.resolved_ip for r in results} == {"127.0.0.1", "::1"}
+            # The IPv4 listener is open on 127.0.0.1; ::1 has nothing.
+            by_ip = {r.resolved_ip: r for r in results}
+            assert [p.port for p in by_ip["127.0.0.1"].open_ports] == [port]
+            assert by_ip["::1"].open_ports == []
+        finally:
+            server.close()
+
+    def test_default_scans_only_first_address(self):
+        server, port = _listener()
+        try:
+            thread = _accept_and_close(server)
+            results = scan_targets_sync(
+                expand_targets(["localhost"]),
+                [port],
+                concurrency=10,
+                timeout=2.0,
+                grab_banner=False,
+                resolve_all=False,
+            )
+            thread.join(timeout=5)
+            # Exactly one result regardless of how many addresses exist.
+            assert len(results) == 1
+            assert results[0].host == "localhost"
+            assert results[0].resolved_ip is not None
+        finally:
+            server.close()
+
+    def test_resolve_all_ip_target_is_single_result(self):
+        results = scan_targets_sync(
+            expand_targets(["127.0.0.1"]),
+            [1],
+            concurrency=5,
+            timeout=0.5,
+            grab_banner=False,
+            resolve_all=True,
+        )
+        # An IP literal has exactly one address, so resolve_all changes nothing.
+        assert len(results) == 1
+        assert results[0].resolved_ip == "127.0.0.1"
+
+
 class TestScanEvents:
     def test_event_kinds_and_order(self):
         server, port = _listener()
@@ -140,7 +201,7 @@ class TestScanEvents:
             # The open listener must produce exactly one "open" event.
             assert sum(1 for k in kinds if k == "open") == 1
             start = events[0]
-            assert start.targets == 1 and start.ports == 2 and start.total == 2
+            assert start.targets == 1 and start.ports == 2
             done = events[-1]
             assert done.scanned == 2 and done.open_count == 1 and done.total == 2
         finally:

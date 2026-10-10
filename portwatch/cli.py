@@ -87,6 +87,13 @@ def build_parser() -> argparse.ArgumentParser:
         "scan result itself still goes to stdout, so piping is unaffected",
     )
     parser.add_argument(
+        "--resolve-all",
+        action="store_true",
+        help="remote mode only: scan every address a hostname resolves to "
+        "(all A and AAAA records) instead of only the first; each address is "
+        "reported as its own row",
+    )
+    parser.add_argument(
         "--protocol",
         choices=("inet", "tcp", "udp"),
         default="inet",
@@ -291,13 +298,11 @@ def _make_verbose_reporter(stderr: IO[str]):
     the scanner's ``on_event`` signature.
     """
     total = 0
-    scanned = 0
     last_reported = -1
 
     def report(event: ScanEvent) -> None:
-        nonlocal total, scanned, last_reported
+        nonlocal total, last_reported
         if event.kind == "start":
-            total = event.total
             print(
                 f"[*] scanning {event.targets} target(s) x {event.ports} port(s)",
                 file=stderr,
@@ -307,27 +312,33 @@ def _make_verbose_reporter(stderr: IO[str]):
                 print(f"[!] {event.host}: could not resolve", file=stderr)
             else:
                 note = (
-                    f" ({event.addresses} addresses)"
-                    if event.addresses > 1
-                    else ""
+                    f" ({event.addresses} addresses)" if event.addresses > 1 else ""
                 )
-                print(
-                    f"[*] {event.host} -> {event.resolved_ip}{note}", file=stderr
-                )
+                print(f"[*] {event.host} -> {event.resolved_ip}{note}", file=stderr)
         elif event.kind == "open":
             service = event.service or "?"
-            print(
-                f"[+] open {event.host}:{event.port} ({service})", file=stderr
+            # Only annotate the resolved address when it adds information
+            # (i.e. the host is a name that maps to more than one address).
+            label = (
+                f"{event.host}@{event.resolved_ip}"
+                if event.resolved_ip and event.resolved_ip != event.host
+                else event.host
             )
+            print(f"[+] open {label}:{event.port} ({service})", file=stderr)
         elif event.kind == "progress":
-            scanned = event.scanned
+            total = event.total or total
+            if total <= 0:
+                return
             # Refresh the counter roughly every 5% of the run to avoid
             # flooding the terminal on large sweeps.
             step = max(total // 20, 1)
-            if scanned - last_reported >= step or scanned == total:
-                last_reported = scanned
-                pct = (100 * scanned // total) if total else 100
-                print(f"[*] {scanned}/{total} ports probed ({pct}%)", file=stderr)
+            if event.scanned - last_reported >= step or event.scanned == total:
+                last_reported = event.scanned
+                pct = 100 * event.scanned // total
+                print(
+                    f"[*] {event.scanned}/{total} ports probed ({pct}%)",
+                    file=stderr,
+                )
         elif event.kind == "done":
             print(
                 f"[*] done: {event.open_count} open port(s) found", file=stderr
@@ -375,6 +386,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             timeout=args.timeout,
             grab_banner=True,
             probe=args.probe,
+            resolve_all=args.resolve_all,
             on_event=on_event,
         )
         rendered = _render_remote(results, args.output_format)

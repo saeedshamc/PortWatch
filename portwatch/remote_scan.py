@@ -89,17 +89,21 @@ async def scan_remote(
     timeout: float = 2.0,
     grab_banner: bool = True,
     probe: bool = False,
+    resolve_all: bool = False,
     on_event: Callable[[ScanEvent], None] | None = None,
 ) -> list[RemoteScanResult]:
     """Scan each target's ports concurrently and group results per host.
 
     Each target is resolved once; every port is then probed against the
     resolved address, so DNS is queried a single time per host regardless of
-    port count. ``concurrency`` bounds the number of in-flight connection
-    attempts and ``timeout`` limits each individual TCP connect (and banner
-    read). With ``probe=True`` an HTTP HEAD request is sent before reading
-    the banner so silent services (e.g. web servers) can be identified.
-    Unresolvable hostnames are reported with no open ports.
+    port count. By default only the first resolved address is scanned; pass
+    ``resolve_all=True`` to probe *every* address a hostname maps to (A and
+    AAAA records alike), which yields one :class:`RemoteScanResult` per
+    address sharing the same ``host``. ``concurrency`` bounds the number of
+    in-flight connection attempts and ``timeout`` limits each individual TCP
+    connect (and banner read). With ``probe=True`` an HTTP HEAD request is
+    sent before reading the banner so silent services (e.g. web servers) can
+    be identified. Unresolvable hostnames are reported with no open ports.
 
     If ``on_event`` is provided it is called synchronously with a
     :class:`ScanEvent` as the scan progresses: a ``start`` event once at the
@@ -118,39 +122,45 @@ async def scan_remote(
         if on_event is not None:
             on_event(event)
 
-    total_planned = len(targets) * len(ports)
-    scanned = 0  # mutated from probes; asyncio is single-threaded so this is safe.
-    open_count = 0
+    emit(ScanEvent(kind="start", targets=len(targets), ports=len(ports)))
 
-    emit(ScanEvent(kind="start", targets=len(targets), ports=len(ports), total=total_planned))
-
-    async def scan_target(target: Target) -> RemoteScanResult:
+    # Phase 1: resolve every target up front so the progress total is exact.
+    resolved_units: list[tuple[str, str | None]] = []
+    for target in targets:
         host_key = target.raw if not target.is_ip else target.host
         addresses = await _resolve_addresses(target)
-        resolved = addresses[0] if addresses else None
         emit(
             ScanEvent(
                 kind="resolve",
                 host=host_key,
-                resolved_ip=resolved,
+                resolved_ip=addresses[0] if addresses else None,
                 addresses=len(addresses),
             )
         )
-        if resolved is None:
-            return RemoteScanResult(
-                host=host_key, resolved_ip=None, ports_scanned=len(ports), open_ports=[]
-            )
+        if not addresses:
+            resolved_units.append((host_key, None))
+        elif resolve_all:
+            resolved_units.extend((host_key, address) for address in addresses)
+        else:
+            resolved_units.append((host_key, addresses[0]))
+
+    scannable = [unit for unit in resolved_units if unit[1] is not None]
+    total_planned = len(scannable) * len(ports)
+    scanned = 0  # mutated from probes; asyncio is single-threaded so this is safe.
+    open_count = 0
+
+    async def scan_unit(host_key: str, address: str) -> RemoteScanResult:
+        nonlocal scanned, open_count
 
         async def probe_one(port: int) -> PortResult:
             nonlocal scanned, open_count
-            result = await _probe_port(
-                resolved, port, timeout, semaphore, grab_banner, probe
-            )
+            result = await _probe_port(address, port, timeout, semaphore, grab_banner, probe)
             scanned += 1
             emit(
                 ScanEvent(
                     kind="progress",
                     host=host_key,
+                    resolved_ip=address,
                     port=result.port,
                     scanned=scanned,
                     total=total_planned,
@@ -162,6 +172,7 @@ async def scan_remote(
                     ScanEvent(
                         kind="open",
                         host=host_key,
+                        resolved_ip=address,
                         port=result.port,
                         service=result.service,
                         banner=result.banner,
@@ -175,12 +186,21 @@ async def scan_remote(
         open_ports.sort(key=lambda r: r.port)
         return RemoteScanResult(
             host=host_key,
-            resolved_ip=resolved,
+            resolved_ip=address,
             ports_scanned=len(ports),
             open_ports=open_ports,
         )
 
-    results = list(await asyncio.gather(*(scan_target(t) for t in targets)))
+    async def scan_unit_or_empty(host_key: str, address: str | None) -> RemoteScanResult:
+        if address is None:
+            return RemoteScanResult(
+                host=host_key, resolved_ip=None, ports_scanned=len(ports), open_ports=[]
+            )
+        return await scan_unit(host_key, address)
+
+    results = list(
+        await asyncio.gather(*(scan_unit_or_empty(h, a) for h, a in resolved_units))
+    )
     emit(
         ScanEvent(
             kind="done",
@@ -201,6 +221,7 @@ def scan_targets_sync(
     timeout: float = 2.0,
     grab_banner: bool = True,
     probe: bool = False,
+    resolve_all: bool = False,
     on_event: Callable[[ScanEvent], None] | None = None,
 ) -> list[RemoteScanResult]:
     """Synchronous entry point that runs the async scanner on a fresh loop."""
@@ -212,6 +233,7 @@ def scan_targets_sync(
             timeout=timeout,
             grab_banner=grab_banner,
             probe=probe,
+            resolve_all=resolve_all,
             on_event=on_event,
         )
     )

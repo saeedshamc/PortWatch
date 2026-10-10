@@ -115,6 +115,71 @@ class TestScanTargetsSync:
         assert results[0].open_ports == []
 
 
+class TestScanEvents:
+    def test_event_kinds_and_order(self):
+        server, port = _listener()
+        try:
+            thread = _accept_and_close(server)
+            events = []
+            scan_targets_sync(
+                expand_targets(["127.0.0.1"]),
+                [port, port + 1],
+                concurrency=10,
+                timeout=2.0,
+                grab_banner=False,
+                on_event=events.append,
+            )
+            thread.join(timeout=5)
+            kinds = [e.kind for e in events]
+            assert kinds[0] == "start"
+            assert kinds[-1] == "done"
+            assert "resolve" in kinds
+            assert "progress" in kinds
+            # One progress event per probed port (2 ports).
+            assert sum(1 for k in kinds if k == "progress") == 2
+            # The open listener must produce exactly one "open" event.
+            assert sum(1 for k in kinds if k == "open") == 1
+            start = events[0]
+            assert start.targets == 1 and start.ports == 2 and start.total == 2
+            done = events[-1]
+            assert done.scanned == 2 and done.open_count == 1 and done.total == 2
+        finally:
+            server.close()
+
+    def test_no_callback_still_scans(self):
+        server, port = _listener()
+        try:
+            thread = _accept_and_close(server)
+            results = scan_targets_sync(
+                expand_targets(["127.0.0.1"]),
+                [port],
+                concurrency=5,
+                timeout=2.0,
+                grab_banner=False,
+                on_event=None,
+            )
+            thread.join(timeout=5)
+            assert results[0].open_ports
+        finally:
+            server.close()
+
+    def test_unresolvable_emits_resolve_with_none_ip(self):
+        events = []
+        scan_targets_sync(
+            expand_targets(["no-such-host.invalid"]),
+            [80],
+            concurrency=5,
+            timeout=1.0,
+            grab_banner=False,
+            on_event=events.append,
+        )
+        resolve = next(e for e in events if e.kind == "resolve")
+        assert resolve.resolved_ip is None
+        assert resolve.host == "no-such-host.invalid"
+        # No ports were probed, so no progress events fired.
+        assert not [e for e in events if e.kind == "progress"]
+
+
 class TestScanRemoteAsync:
     def test_concurrency_limit_respected(self):
         server, port = _listener()

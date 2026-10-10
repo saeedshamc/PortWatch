@@ -48,3 +48,31 @@ class RemoteScanResult:
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+@dataclass
+class ScanEvent:
+    """A progress notification emitted while a remote scan runs.
+
+    Passed to the ``on_event`` callback of :func:`scan_remote`. ``kind`` is
+    one of ``start``, ``resolve``, ``open``, ``progress`` or ``done``; the
+    remaining fields carry whatever is relevant for that kind and default to
+    neutral values, so handlers can switch on ``kind`` and read only what
+    they need.
+    """
+
+    kind: str
+    host: str | None = None
+    port: int | None = None
+    service: str | None = None
+    banner: str | None = None
+    resolved_ip: str | None = None
+    addresses: int = 0
+    scanned: int = 0
+    total: int = 0
+    open_count: int = 0
+    targets: int = 0
+    ports: int = 0
+
+    def as_dict(self) -> dict[str, Any]:
+        return asdict(self)

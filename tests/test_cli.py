@@ -53,6 +53,11 @@ class TestParser:
         assert args.probe is True
         assert args.output_format == "json"
 
+    def test_verbose_flag_defaults_false(self):
+        assert build_parser().parse_args([]).verbose is False
+        args = build_parser().parse_args(["--mode", "remote", "1.2.3.4", "-v"])
+        assert args.verbose is True
+
     def test_bad_mode_rejected(self):
         with pytest.raises(SystemExit):
             build_parser().parse_args(["--mode", "wizard"])
@@ -115,6 +120,25 @@ class TestRemoteMode:
     def test_invalid_cidr_exit_code(self, capsys):
         assert main(["--mode", "remote", "300.300.300.300/24"]) == 2
         assert "error" in capsys.readouterr().err.lower()
+
+    def test_verbose_reports_progress_to_stderr_only(self, http_port, capsys):
+        code = main(["--mode", "remote", "127.0.0.1", "-p", str(http_port),
+                     "--probe", "-v", "-c", "10", "-t", "2"])
+        assert code == 0
+        captured = capsys.readouterr()
+        # Progress diagnostics land on stderr...
+        assert "scanning 1 target(s)" in captured.err
+        assert "-> 127.0.0.1" in captured.err
+        assert "open 127.0.0.1:" in captured.err
+        assert "done:" in captured.err
+        # ...while stdout still carries only the result table.
+        assert "HOST" in captured.out and "scanning" not in captured.out
+
+    def test_without_verbose_no_progress_on_stderr(self, http_port, capsys):
+        code = main(["--mode", "remote", "127.0.0.1", "-p", str(http_port),
+                     "--probe", "-c", "10", "-t", "2"])
+        assert code == 0
+        assert capsys.readouterr().err == ""
 
 
 class TestDiffMode:

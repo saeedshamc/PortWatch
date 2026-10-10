@@ -14,7 +14,7 @@ from typing import IO
 from portwatch import __version__
 from portwatch.diffing import compare_files, exit_code_for, render_diff_table
 from portwatch.local_scan import LocalScanError, scan_local_ports
-from portwatch.models import PortRecord, RemoteScanResult
+from portwatch.models import PortRecord, RemoteScanResult, ScanEvent
 from portwatch.remote_scan import scan_targets_sync
 from portwatch.targets import (
     DEFAULT_PORT_SPEC,
@@ -77,6 +77,14 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="remote mode only: send an HTTP HEAD request to open ports before "
         "reading the banner (identifies silent web servers)",
+    )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="remote mode only: report scan progress to stderr (DNS "
+        "resolution, open ports as they are found, and a live counter); the "
+        "scan result itself still goes to stdout, so piping is unaffected",
     )
     parser.add_argument(
         "--protocol",
@@ -274,6 +282,60 @@ def _emit(
             _write(text, stream=handle)
 
 
+def _make_verbose_reporter(stderr: IO[str]):
+    """Build a callback that renders scan progress to ``stderr``.
+
+    Emits one line per DNS resolution and per open port as it is found, plus
+    a live port counter. All output goes to stderr so piping the scan result
+    (stdout) is unaffected. The returned object is a plain callable matching
+    the scanner's ``on_event`` signature.
+    """
+    total = 0
+    scanned = 0
+    last_reported = -1
+
+    def report(event: ScanEvent) -> None:
+        nonlocal total, scanned, last_reported
+        if event.kind == "start":
+            total = event.total
+            print(
+                f"[*] scanning {event.targets} target(s) x {event.ports} port(s)",
+                file=stderr,
+            )
+        elif event.kind == "resolve":
+            if event.resolved_ip is None:
+                print(f"[!] {event.host}: could not resolve", file=stderr)
+            else:
+                note = (
+                    f" ({event.addresses} addresses)"
+                    if event.addresses > 1
+                    else ""
+                )
+                print(
+                    f"[*] {event.host} -> {event.resolved_ip}{note}", file=stderr
+                )
+        elif event.kind == "open":
+            service = event.service or "?"
+            print(
+                f"[+] open {event.host}:{event.port} ({service})", file=stderr
+            )
+        elif event.kind == "progress":
+            scanned = event.scanned
+            # Refresh the counter roughly every 5% of the run to avoid
+            # flooding the terminal on large sweeps.
+            step = max(total // 20, 1)
+            if scanned - last_reported >= step or scanned == total:
+                last_reported = scanned
+                pct = (100 * scanned // total) if total else 100
+                print(f"[*] {scanned}/{total} ports probed ({pct}%)", file=stderr)
+        elif event.kind == "done":
+            print(
+                f"[*] done: {event.open_count} open port(s) found", file=stderr
+            )
+
+    return report
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -305,6 +367,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             parser.error("remote mode requires at least one target")
         ports = parse_port_spec(args.ports)
         targets = expand_targets(args.targets)
+        on_event = _make_verbose_reporter(sys.stderr) if args.verbose else None
         results = scan_targets_sync(
             targets,
             ports,
@@ -312,6 +375,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             timeout=args.timeout,
             grab_banner=True,
             probe=args.probe,
+            on_event=on_event,
         )
         rendered = _render_remote(results, args.output_format)
         _emit(rendered, args.output_file, sys.stdout, sys.stderr)

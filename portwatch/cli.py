@@ -94,6 +94,13 @@ def build_parser() -> argparse.ArgumentParser:
         "reported as its own row",
     )
     parser.add_argument(
+        "--tls",
+        action="store_true",
+        help="remote mode only: perform a TLS handshake on open ports and "
+        "report the certificate issuer, expiry and SAN list (useful for "
+        "detecting soon-expiring or self-signed certificates)",
+    )
+    parser.add_argument(
         "--protocol",
         choices=("inet", "tcp", "udp"),
         default="inet",
@@ -387,6 +394,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             grab_banner=True,
             probe=args.probe,
             resolve_all=args.resolve_all,
+            tls=args.tls,
             on_event=on_event,
         )
         rendered = _render_remote(results, args.output_format)

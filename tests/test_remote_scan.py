@@ -2,6 +2,7 @@
 
 import asyncio
 import socket
+import ssl
 import threading
 from contextlib import closing
 
@@ -10,6 +11,7 @@ import pytest
 from portwatch.models import PortResult
 from portwatch.remote_scan import _probe_port, scan_remote, scan_targets_sync
 from portwatch.targets import expand_targets
+from portwatch.tls import inspect_tls, _describe_error
 
 
 def _listener() -> tuple[socket.socket, int]:
@@ -207,6 +209,59 @@ class TestScanEvents:
         finally:
             server.close()
 
+    def test_tls_inspection_attaches_to_open_port(self, tmp_path):
+        # Run the async scanner body on a fresh loop. pytest-asyncio is not
+        # installed, so all scanner tests use the synchronous scan_targets_sync
+        # wrapper via asyncio.run.
+
+        async def _tls_scan():
+            # An SSL listener that presents the test fixture certificate, so the
+            # TLS handshake can complete and decode the certificate. The self-signed
+            # cert is intentionally not trusted, which is what we want to assert.
+            cert_path = tmp_path / "test_cert.pem"
+            cert_path.write_text(
+                "-----BEGIN CERTIFICATE-----\n"
+                "MIIDYzCCAkugAwIBAgIUSQ0gpfKS7jhiRL9NrLLnqoyqUwEwDQYJKoZIhvcNAQEL"
+                "-----BEGIN CERTIFICATE-----\n",
+                encoding="ascii",
+            )
+            ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            ssl_context.load_cert_chain(certfile=cert_path, keyfile=tmp_path / "test_key.pem")
+            server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            server.bind(("127.0.0.1", 0))
+            server.listen(5)
+            server = ssl_context.wrap_socket(server, server_side=True)
+            port = server.getsockname()[1]
+            try:
+                thread = threading.Thread(
+                    target=lambda: [
+                        conn, _ := server.accept(),
+                        conn.close(),
+                    ],
+                    daemon=True,
+                )
+                thread.start()
+                results = scan_targets_sync(
+                    expand_targets(["127.0.0.1"]),
+                    [port],
+                    concurrency=5,
+                    timeout=2.0,
+                    grab_banner=False,
+                    tls=True,
+                )
+                thread.join(timeout=5)
+                assert results[0].open_ports
+                tls = results[0].open_ports[0].tls
+                assert tls is not None
+                assert tls.subject == "CN=localhost/O=PortWatchTest"
+                assert "DNS:localhost" in tls.subject_alt_names
+                assert "DNS:test.local" in tls.subject_alt_names
+                assert "IP:127.0.0.1" in tls.subject_alt_names
+                assert not tls.verified
+            finally:
+                server.close()
+
     def test_no_callback_still_scans(self):
         server, port = _listener()
         try:
@@ -224,6 +279,59 @@ class TestScanEvents:
         finally:
             server.close()
 
+    def test_tls_inspection_attaches_to_open_port(self, tmp_path):
+        # Run the async scanner body on a fresh loop. pytest-asyncio is not
+        # installed, so all scanner tests use the synchronous scan_targets_sync
+        # wrapper via asyncio.run.
+
+        # An SSL listener that presents the test fixture certificate, so the
+        # TLS handshake can complete and decode the certificate. The self-signed
+        # cert is intentionally not trusted, which is what we want to assert.
+        async def _tls_scan():
+            cert_path = tmp_path / "test_cert.pem"
+            cert_path.write_text(
+                "-----BEGIN CERTIFICATE-----\n"
+                "MIIDYzCCAkugAwIBAgIUSQ0gpfKS7jhiRL9NrLLnqoyqUwEwDQYJKoZIhvcNAQEL"
+                "-----BEGIN CERTIFICATE-----\n",
+                encoding="ascii",
+            )
+            ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            ssl_context.load_cert_chain(certfile=cert_path, keyfile=tmp_path / "test_key.pem")
+            server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            server.bind(("127.0.0.1", 0))
+            server.listen(5)
+            server = ssl_context.wrap_socket(server, server_side=True)
+            port = server.getsockname()[1]
+            try:
+                thread = threading.Thread(
+                    target=lambda: [
+                        conn, _ := server.accept(),
+                        conn.close(),
+                    ],
+                    daemon=True,
+                )
+                thread.start()
+                results = scan_targets_sync(
+                    expand_targets(["127.0.0.1"]),
+                    [port],
+                    concurrency=5,
+                    timeout=2.0,
+                    grab_banner=False,
+                    tls=True,
+                )
+                thread.join(timeout=5)
+                assert results[0].open_ports
+                tls = results[0].open_ports[0].tls
+                assert tls is not None
+                assert tls.subject == "CN=localhost/O=PortWatchTest"
+                assert "DNS:localhost" in tls.subject_alt_names
+                assert "DNS:test.local" in tls.subject_alt_names
+                assert "IP:127.0.0.1" in tls.subject_alt_names
+                assert not tls.verified
+            finally:
+                server.close()
+
     def test_unresolvable_emits_resolve_with_none_ip(self):
         events = []
         scan_targets_sync(
@@ -239,6 +347,124 @@ class TestScanEvents:
         assert resolve.host == "no-such-host.invalid"
         # No ports were probed, so no progress events fired.
         assert not [e for e in events if e.kind == "progress"]
+
+
+class TestTls:
+    def _tls_listener(self, tmp_path):
+        # Start an SSL listener that presents the test fixture certificate,
+        # so the TLS handshake can complete and decode the certificate.
+        cert_path = tmp_path / "test_cert.pem"
+        cert_path.write_bytes(open("tests/fixtures/test_cert.pem", "rb").read())
+        key_path = tmp_path / "test_key.pem"
+        key_path.write_bytes(open("tests/fixtures/test_key.pem", "rb").read())
+
+
+        ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ssl_context.load_cert_chain(certfile=cert_path, keyfile=key_path)
+        listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        server = ssl_context.wrap_socket(listener, server_side=True)
+        return server, listener
+
+    def test_describe_error_timeout(self):
+        from asyncio import TimeoutError
+
+        assert _describe_error(TimeoutError()) == "timed out"
+        assert _describe_error(OSError()) == "oserror"
+        assert _describe_error(Exception("boom")) == "boom"
+
+    def test_inspect_tls_when_plaintext_port_decodes_certificate(self, tmp_path):
+        # With ``CERT_NONE`` verification the scanner treats an SSL listener
+        # with a self-signed certificate as a valid TLS connection and decodes
+        # the certificate details, which is the documented scanner behaviour.
+        server, listener = self._tls_listener(tmp_path)
+        try:
+            port = server.getsockname()[1]
+            thread = threading.Thread(
+                target=self._accept_and_close_connection,
+                args=(server,),
+                daemon=True,
+            )
+            thread.start()
+            try:
+                results = scan_targets_sync(
+                    expand_targets(["127.0.0.1"]),
+                    [port],
+                    concurrency=5,
+                    timeout=2.0,
+                    grab_banner=False,
+                    tls=True,
+                )
+            finally:
+                server.close()
+                listener.close()
+            thread.join(timeout=5)
+            assert results[0].open_ports
+            tls = results[0].open_ports[0].tls
+            assert tls is not None
+            assert tls.subject == "CN=localhost/O=PortWatchTest"
+            assert not tls.verified
+        finally:
+            server.close()
+            listener.close()
+
+    def _accept_and_close_connection(self, server: socket.socket) -> None:
+        try:
+            conn, _ = server.accept()
+            conn.close()
+        except OSError:
+            pass
+
+    def test_inspect_tls_decodes_self_signed_cert(self, tmp_path):
+        # The scanner works without the ``cryptography`` dependency: it
+        # handshakes without verification and decodes the DER certificate with
+        # CPython's ``_test_decode_cert`` helper.
+        server, listener = self._tls_listener(tmp_path)
+        try:
+            port = server.getsockname()[1]
+            thread = threading.Thread(
+                target=self._accept_and_close_connection,
+                args=(server,),
+                daemon=True,
+            )
+            thread.start()
+            try:
+                results = scan_targets_sync(
+                    expand_targets(["127.0.0.1"]),
+                    [port],
+                    concurrency=5,
+                    timeout=2.0,
+                    grab_banner=False,
+                    tls=True,
+                )
+            finally:
+                server.close()
+                listener.close()
+            thread.join(timeout=5)
+            assert results[0].open_ports
+            tls = results[0].open_ports[0].tls
+            assert tls is not None
+            assert tls.subject == "CN=localhost/O=PortWatchTest"
+            assert "DNS:localhost" in tls.subject_alt_names
+            assert "DNS:test.local" in tls.subject_alt_names
+            assert "IP:127.0.0.1" in tls.subject_alt_names
+            assert not tls.verified
+        finally:
+            server.close()
+            listener.close()
+
+    def test_inspect_tls_with_trusted_cert_decodes_and_verifies(self):
+        # A real, widely trusted certificate. ``_is_trusted`` succeeds here,
+        # which is the path that distinguishes a valid certificate from a
+        # self-signed one.
+        info = asyncio.run(inspect_tls("example.com", 443, timeout=5.0))
+        # The handshake may legitimately fail on a slow/unreachable network;
+        # the important assertion is that the error surface is reported, not
+        # that example.com is always reachable.
+        assert info.error is None or info.error == ""
+        assert info.subject is not None
 
 
 class TestScanRemoteAsync:

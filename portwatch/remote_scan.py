@@ -6,10 +6,13 @@ import asyncio
 import socket
 from collections.abc import Callable, Iterable, Sequence
 
+import ssl
+
 from portwatch.banner import build_http_probe, identify_service
 from portwatch.banner import grab_banner as _grab_banner
 from portwatch.models import PortResult, RemoteScanResult, ScanEvent
 from portwatch.targets import Target
+from portwatch.tls import inspect_tls
 
 
 async def _resolve_addresses(target: Target) -> list[str]:
@@ -41,13 +44,31 @@ async def _probe_port(
     semaphore: asyncio.Semaphore,
     grab_banner: bool,
     probe: bool,
+    tls: bool = False,
 ) -> PortResult:
-    """Attempt one TCP connection; optionally read an identifying banner."""
+    """Attempt one TCP connection; optionally read an identifying banner.
+
+    When ``tls`` is true the connection is first wrapped in an insecure TLS
+    client context. A fresh context is built per call because reusing an
+    existing one across successive ``asyncio.open_connection`` calls is
+    unreliable on some platforms.
+    """
     async with semaphore:
         try:
-            reader, writer = await asyncio.wait_for(
-                asyncio.open_connection(host, port), timeout=timeout
-            )
+            if tls:
+                insecure = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+                insecure.check_hostname = False
+                insecure.verify_mode = ssl.CERT_NONE
+                reader, writer = await asyncio.wait_for(
+                    asyncio.open_connection(
+                        host, port, ssl=insecure, server_hostname=host
+                    ),
+                    timeout=timeout,
+                )
+            else:
+                reader, writer = await asyncio.wait_for(
+                    asyncio.open_connection(host, port), timeout=timeout
+                )
         except (OSError, asyncio.TimeoutError) as exc:
             name = type(exc).__name__
             if isinstance(exc, asyncio.TimeoutError):
@@ -90,6 +111,7 @@ async def scan_remote(
     grab_banner: bool = True,
     probe: bool = False,
     resolve_all: bool = False,
+    tls: bool = False,
     on_event: Callable[[ScanEvent], None] | None = None,
 ) -> list[RemoteScanResult]:
     """Scan each target's ports concurrently and group results per host.
@@ -154,7 +176,13 @@ async def scan_remote(
 
         async def probe_one(port: int) -> PortResult:
             nonlocal scanned, open_count
-            result = await _probe_port(address, port, timeout, semaphore, grab_banner, probe)
+            result = await _probe_port(
+                address, port, timeout, semaphore, grab_banner, probe, tls=tls
+            )
+            if result.open and tls:
+                # A separate handshake (the banner probe may have disturbed the
+                # stream); never raises, failures land in ``result.tls.error``.
+                result.tls = await inspect_tls(address, port, timeout)
             scanned += 1
             emit(
                 ScanEvent(
@@ -222,6 +250,7 @@ def scan_targets_sync(
     grab_banner: bool = True,
     probe: bool = False,
     resolve_all: bool = False,
+    tls: bool = False,
     on_event: Callable[[ScanEvent], None] | None = None,
 ) -> list[RemoteScanResult]:
     """Synchronous entry point that runs the async scanner on a fresh loop."""
@@ -234,6 +263,7 @@ def scan_targets_sync(
             grab_banner=grab_banner,
             probe=probe,
             resolve_all=resolve_all,
+            tls=tls,
             on_event=on_event,
         )
     )

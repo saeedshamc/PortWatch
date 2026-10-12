@@ -23,6 +23,31 @@ class PortRecord:
 
 
 @dataclass
+class TlsInfo:
+    """Certificate and protocol details captured during a TLS handshake.
+
+    Populated when ``--tls`` is used against an open port. Because the
+    handshake is performed without validating the chain (a scanner must
+    report certificates it does not trust), ``verified`` records whether the
+    certificate actually chains to a trusted root, so an untrusted cert is
+    never mistaken for a valid one.
+    """
+
+    protocol: str | None = None
+    cipher: str | None = None
+    subject: str | None = None
+    issuer: str | None = None
+    not_before: str | None = None
+    not_after: str | None = None
+    subject_alt_names: list[str] = field(default_factory=list)
+    verified: bool = False
+    error: str | None = None
+
+    def as_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
 class PortResult:
     """Outcome of probing a single port on a remote target."""
 
@@ -32,6 +57,7 @@ class PortResult:
     error: str | None = None
     banner: str | None = None
     service: str | None = None
+    tls: TlsInfo | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)

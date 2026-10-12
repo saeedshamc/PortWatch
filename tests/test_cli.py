@@ -58,6 +58,11 @@ class TestParser:
         args = build_parser().parse_args(["--mode", "remote", "1.2.3.4", "-v"])
         assert args.verbose is True
 
+    def test_tls_flag_defaults_false(self):
+        assert build_parser().parse_args([]).tls is False
+        args = build_parser().parse_args(["--mode", "remote", "127.0.0.1", "--tls"])
+        assert args.tls is True
+
     def test_resolve_all_flag_defaults_false(self):
         assert build_parser().parse_args([]).resolve_all is False
         args = build_parser().parse_args(
